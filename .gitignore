@@ -1,0 +1,22 @@
+# --- Ignorar archivos de sistema y compilación ---
+.venv/
+__pycache__/
+.vscode/
+build/
+*.o
+*.out
+*.exe
+
+# --- Ignorar el ejecutable compilado ---
+proyecto
+vigilancia
+
+# --- Ignorar Dataset (¡Muy pesado!) ---
+# Si quieres subir las fotos, borra estas lineas, 
+# pero GitHub tiene límite de espacio.
+dataset_hog/
+
+# --- Ignorar evidencias y archivos temporales ---
+evidencias/
+temp_envio.jpg
+mi_hog_personalizado.yml

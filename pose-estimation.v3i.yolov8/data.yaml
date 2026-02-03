@@ -1,0 +1,16 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+kpt_shape: [13, 3]
+flip_idx: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+nc: 4
+names: ['Berdiri', 'Duduk', 'Jalan', 'Lari']
+
+roboflow:
+  workspace: skripsi-fn4pn
+  project: pose-estimation-07d85
+  version: 3
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/skripsi-fn4pn/pose-estimation-07d85/dataset/3
