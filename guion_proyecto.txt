@@ -1,127 +1,61 @@
-GUION DEL PROYECTO FINAL: SISTEMA DE VIGILANCIA INTELIGENTE
+GUION DEL PROYECTO FINAL: SISTEMA DE VIGILANCIA INTELIGENTE (VERSIÓN ACTUALIZADA)
 
-1. GENERACIÓN DE DATOS (generar_dataset.py)
---------------------------------------------
-Este script es el primer paso vital. Sin datos de calidad, el modelo HOG no funciona.
-- Origen: Se basa en el dataset "pose-estimation" (YOLO format).
-- Proceso:
-  a. Lee cada imagen y su archivo de etiquetas (.txt).
-  b. Recorta (crop) exactamente donde está la persona usando las coordenadas.
-  c. Redimensiona el recorte a 64x128 píxeles (requisito técnico de HOG).
+Este proyecto implementa un sistema de vigilancia distribuido que combina **C++ (Eficiencia)** y **Python (Inteligencia)**, cumpliendo con la rúbrica mediante métricas de rendimiento y gestión de usuarios.
 
-  [CÓDIGO CLAVE]
-  ```python
-  # 1. Extraer el recorte de la persona
-  crop = img[y1:y2, x1:x2]
-  
-  # 2. Redimensionar a 64x128 (Estándar HOG)
-  crop_resized = cv2.resize(crop, (64, 128))
-  
-  # 3. Data Augmentation (Generar variaciones)
-  augmented = transform(image=crop_resized)["image"]
-  ```
+---
 
-- Data Augmentation (Aumento de Datos):
-  Para que el detector sea robusto, multiplicamos los datos x15 aplicando:
-  - Espejo (Flip horizontal).
-  - Desenfoque (Motion Blur) para simular cámaras en movimiento.
-  - Cambios de luz y ruido.
-- Resultado: Miles de imágenes de peatones listas en la carpeta 'dataset_hog/pos'.
+### 1. El Vigilante Optimizado: `main.cpp` (C++)
+**Rol:** Detección de intrusos en tiempo real con monitoreo de recursos.
 
-2. ENTRENAMIENTO (entrenar_hog.py)
-----------------------------------
-Aquí "enseñamos" al ordenador a distinguir a una persona.
-- Algoritmo: Usamos HOG (Histogram of Oriented Gradients) + SVM Lineal.
-- Estrategia: "Partial Fit" (entrenamiento incremental).
-  Esto permite entrenar con miles de fotos sin llenar la memoria RAM.
+*   **Detección de Alta Sensibilidad:**
+    *   Usa **HOG con SVM** configurado para máxima sensibilidad (`hitThreshold=0.1`).
+    *   **Filtros Inteligentes:**
+        *   Descarta falsos positivos por altura (< 50 píxeles).
+        *   Analiza la proporción (Ratio 0.2 a 1.2) para detectar personas incluso si están agachadas.
+    *   **Visualización de Confianza:** Muestra el nivel de certeza del algoritmo sobre cada detección en tiempo real.
 
-  [CÓDIGO CLAVE]
-  ```python
-  # Configuración del modelo SVM (SGD = Stochastic Gradient Descent)
-  # loss='hinge' equivale a un SVM lineal clásico
-  model = SGDClassifier(loss='hinge', max_iter=1000, warm_start=True)
-  
-  # Entrenamiento por lotes (evita desbordar la RAM)
-  model.partial_fit(X_batch, y_batch, classes=[0, 1])
-  ```
+*   **Cumplimiento de Rúbrica (Métricas):**
+    *   **FPS (Frames Por Segundo):** Calcula y muestra la fluidez del video en la esquina superior izquierda.
+    *   **Consumo de RAM:** Una función dedicada (`getRAMUsageMB`) lee el archivo del sistema `/proc/self/statm` para mostrar cuánta memoria usa el programa en tiempo real.
 
-- Salida: El archivo 'mi_hog_personalizado.yml', que contiene las matemáticas (pesos) del detector.
+*   **Lógica de Alarma:**
+    *   Si detecta una amenaza durante **4 frames consecutivos**, entra en estado de **ALERTA**.
+    *   Muestra "ENVIANDO API..." en pantalla.
+    *   Bloquea la cámara y cede el control a Python para el análisis profundo.
 
-3. SURVEILLANCE CLIENT (main.cpp)
------------------------------------
-This is the "eye" of the system in C++. It prioritizes speed.
+---
 
-- Optimization:
-  - It only analyzes 1 out of every 3 frames to avoid overloading the CPU.
+### 2. El Cerebro Multihilo: `servidor.py` (Python)
+**Rol:** Gestión de usuarios, Inteligencia Artificial avanzada (YOLO) y comunicación.
 
-  [KEY CODE: OPTIMIZATION]
-  ```cpp
-  // Frame Skipping: Process only every 3rd frame
-  if (frameCount % 3 != 0) {
-      imshow("Vigilancia", frame);
-      continue; 
-  }
-  ```
+*   **Arquitectura Multihilo (Concurrency):**
+    *   El programa ejecuta **dos procesos simultáneos**:
+        1.  **Flask (Hilo Principal):** Escucha las alertas de C++ (`/subir_foto`, `/grabar_video`).
+        2.  **Telegram Bot (Hilo Secundario):** Escucha comandos de usuarios sin bloquear la cámara.
 
-- Intelligent Filters (to avoid false alarms):
-  - Height: If it is too small or too large, it ignores it.
-  - Aspect Ratio: If it is too wide (e.g., a car), it ignores it.
+*   **Gestión de Usuarios (`/start`):**
+    *   Implementa una base de datos en memoria (`suscriptores`).
+    *   Solo los usuarios que envían `/start` recibirán las alertas (Cumple requisito de suscripción).
 
-  [KEY CODE: HOG & FILTERS]
-  ```cpp
-  // Initialize HOG with Default People Detector
-  hog.setSVMDetector(HOGDescriptor::getDefaultPeopleDetector());
-  
-  // Detect people (MultiScale handles different distances)
-  hog.detectMultiScale(frame, found, weights, 0.3, Size(8,8), Size(32,32), 1.05, 2);
-  
-  // Logical Filters for False Positives
-  if (r.height < 60 || r.height > 470) continue; // Height filter
-  double ratio = (double)r.width / r.height;
-  if (ratio > 0.85 || ratio < 0.2) continue;     // Aspect ratio filter (ignore cars/poles)
-  ```
+*   **Procesamiento Avanzado (YOLOv11):**
+    *   Recibe la foto de C++ y aplica **Estimación de Postura**.
+    *   **Estampado de Métricas (Data Overlay):**
+        *   Sobre la imagen procesada, dibuja un banner negro con datos técnicos:
+        *   **Conf:** Confianza promedio de la IA.
+        *   **Ptos:** Cantidad de puntos del esqueleto detectados.
+        *   **RAM Server:** Consumo de memoria del proceso Python en ese instante.
 
-- Alert Logic:
-  - Only alerts if it detects someone in 3 consecutive frames.
-  - Has a security cooldown to prevent spam.
-- Communication:
-  - If it confirms an intrusion, it sends the image to the server using `curl` (HTTP POST).
+*   **Generación de Evidencia de Video:**
+    *   Toma el control de la cámara (liberada por C++).
+    *   Graba 5 segundos de video mientras aplica YOLO frame a frame.
+    *   Envía el video resultante ("Registro de Movimiento") a todos los usuarios suscritos.
 
-4. ANALYSIS SERVER (server.py)
-------------------------------------- 
-This is the "brain" in Python. It uses modern Artificial Intelligence.
+---
 
-- Reception: It receives the image sent by C++.
-  - Reads from memory to avoid slow disk I/O.
-  
-  [KEY CODE: MEMORY READING]
-  ```python
-  filestr = file.read()
-  npimg = np.frombuffer(filestr, np.uint8)
-  img = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
-  ```
+### 🔄 Resumen del Flujo de Datos
 
-- Verification with YOLOv11 (Pose):
-  - HOG is fast but sometimes fails. YOLO is the final judge.
-  - If YOLO sees a human skeleton, it confirms the alert.
-
-  [KEY CODE: INFERENCE]
-  ```python
-  # Run YOLOv11 Pose Estimation model
-  results = model.predict(img, conf=0.5)
-  
-  # Generate image with skeleton overlay
-  img_procesada = results[0].plot()
-  ```
-
-- Notification:
-  - Sends the original and processed photos (with the skeleton drawn) to Telegram.
-
-  [KEY CODE: TELEGRAM]
-  ```python
-  bot.send_photo(CHAT_ID, foto, caption="⚠️ ALERTA DE SEGURIDAD")
-  ```
-
-DATA FLOW SUMMARY
---------------------------
-[Camera] -> [C++ Detects Motion (HOG)] -> [HTTP Send] -> [Python Validates (YOLO)] -> [Telegram Notification]
+1.  **C++** detecta movimiento + Mide RAM/FPS ➝ Alerta a Python.
+2.  **Python** verifica usuarios suscritos ➝ Si hay, procesa.
+3.  **Python** analiza foto con YOLO ➝ Estampa Métricas (RAM, Confianza) ➝ Envía a Telegram.
+4.  **Python** graba video 5s con esqueleto ➝ Envía a Telegram.
+5.  **C++** recupera la cámara y sigue vigilando.
