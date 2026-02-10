@@ -8,39 +8,55 @@
 using namespace cv;
 using namespace std;
 
-// --- CONFIGURACIÓN ---
+// CONFIGURACIÓN
 const int FRAME_WIDTH = 640;
 const int FRAME_HEIGHT = 480;
-// Reemplaza esto con tu URL real o localhost
-const string SERVER_URL = "http://127.0.0.1:5000/detectar"; 
+const string URL_FOTO = "http://127.0.0.1:5000/subir_foto"; 
+const string URL_VIDEO = "http://127.0.0.1:5000/grabar_video"; 
 
-void enviarImagenAlBot(const Mat& img) {
+// 1. Envía la foto (Bloqueante: Espera a que Python mande las 2 imágenes)
+void enviarFoto(const Mat& img) {
     imwrite("temp_envio.jpg", img);
-    // El "&" al final es vital: lanza el proceso en segundo plano para no congelar la cámara
-    string command = "curl -s -X POST -F \"file=@temp_envio.jpg\" " + SERVER_URL + " &";
+    cout << "\n[C++] Enviando evidencia fotográfica..." << endl;
+    
+    // SIN '&' al final -> El programa espera aquí
+    string command = "curl -s -X POST -F \"file=@temp_envio.jpg\" " + URL_FOTO;
     system(command.c_str()); 
+    cout << "[C++] Fotos enviadas." << endl;
+}
+
+// 2. Activa el video (Relevo de cámara)
+void activarVideo(VideoCapture& cap) {
+    cout << "[C++] Iniciando protocolo de video..." << endl;
+    
+    cap.release(); // Soltar cámara
+    
+    cout << "[C++] Grabando video en Python..." << endl;
+    string command = "curl -s -X POST " + URL_VIDEO;
+    system(command.c_str()); // Esperar a que termine de grabar y enviar
+    
+    // Recuperar cámara
+    cap.open(0);
+    if (!cap.isOpened()) {
+        cerr << "Error Fatal: Cámara perdida." << endl;
+        exit(-1);
+    }
+    cap.set(CAP_PROP_FRAME_WIDTH, FRAME_WIDTH);
+    cap.set(CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT);
+    cout << "[C++] Vigilancia restaurada.\n" << endl;
 }
 
 int main() {
     VideoCapture cap(0);
-    if (!cap.isOpened()) {
-        cerr << "Error: Cámara no encontrada" << endl;
-        return -1;
-    }
+    if (!cap.isOpened()) return -1;
     
-    // Configuración de Hardware
     cap.set(CAP_PROP_FRAME_WIDTH, FRAME_WIDTH);
     cap.set(CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT);
 
-    // --- 1. DETECTOR (HOG + SVM) ---
     HOGDescriptor hog; 
-    
-    // ESTRATEGIA: Usamos el detector pre-entrenado (INRIA)
-    // Esto elimina el "cuadro verde fantasma" causado por el mal entrenamiento casero.
-    // Además cumple con la ilustración del PDF que menciona HOG.
     hog.setSVMDetector(HOGDescriptor::getDefaultPeopleDetector());
     
-    cout << "--- SISTEMA HOG OPTIMIZADO (Speed + Accuracy) ---" << endl;
+    cout << "--- SISTEMA VIGILANCIA COMPLETO ---" << endl;
 
     Mat frame;
     int contadorDeteccion = 0;
@@ -52,11 +68,8 @@ int main() {
         if (frame.empty()) break;
         frameCount++;
 
-        // --- 2. OPTIMIZACIÓN DE FLUJO (Frame Skipping) ---
-        // Procesamos HOG solo 1 de cada 3 frames.
-        // Los otros 2 frames solo son de "paso" (video fluido).
         if (frameCount % 3 != 0) {
-            imshow("Vigilancia", frame);
+            imshow("Vigilancia C++", frame);
             if (waitKey(1) == 'q') break;
             continue; 
         }
@@ -64,58 +77,46 @@ int main() {
         vector<Rect> found;
         vector<double> weights;
 
-        // --- CALIBRACIÓN EQUILIBRADA ---
-        // hitThreshold: 0.3 (Antes 1.1). Bajamos para que sea más sensible y te detecte fácil.
-        // winStride: Size(8,8) (Antes 16,16). Volvemos al estándar para que no se salte píxeles.
-        // groupThreshold: 2 (Antes 3). Exigimos menos confirmaciones.
-        hog.detectMultiScale(frame, found, weights, 0.3, Size(8,8), Size(32,32), 1.05, 2);
+        // Detección
+        hog.detectMultiScale(frame, found, weights, 0.6, Size(8,8), Size(32,32), 1.05, 2);
 
         bool cuerpoEnteroDetectado = false;
-
         for (size_t i = 0; i < found.size(); i++) {
             Rect r = found[i];
-
-            // --- FILTROS RELAJADOS ---
             
-            // A. Altura: Aceptamos gente más pequeña (lejos) y más grande (cerca)
-            if (r.height < 60 || r.height > 470) continue; 
-
-            // B. Proporción: Aceptamos gente más "ancha" (hasta 0.85) por si usas ropa holgada
+            // Filtros relajados
+            if (r.height < 60) continue; 
             double ratio = (double)r.width / r.height;
-            if (ratio > 0.85 || ratio < 0.2) continue;
-
-            // C. Bordes: Mantenemos este para evitar falsos al entrar
+            if (ratio < 0.25 || ratio > 0.9) continue;
             if (r.x < 2 || r.y < 2 || (r.x + r.width) > frame.cols - 2) continue;
 
-            // SI PASA: DIBUJAMOS
             rectangle(frame, r.tl(), r.br(), Scalar(0, 255, 0), 2);
             cuerpoEnteroDetectado = true;
+        }
+
+        if (cuerpoEnteroDetectado) contadorDeteccion++;
+        else contadorDeteccion = 0;
+
+        // ALERTA
+        if (contadorDeteccion >= 4 && cooldown == 0) {
+            putText(frame, "ALERTA: GENERANDO REPORTE...", Point(20, 50), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 255), 2);
+            imshow("Vigilancia C++", frame);
+            waitKey(1);
+
+            // SECUENCIA EXACTA:
+            // 1. Enviar Foto (Python manda HOG y luego YOLO)
+            enviarFoto(frame);
+
+            // 2. Grabar Video (Python graba y manda)
+            activarVideo(cap);
             
-            // DEBUG VISUAL: Esto te dirá qué está viendo el HOG
-            // Si ves el número pero no el cuadro verde, es que el filtro lo borró.
-            string info = to_string(r.height) + "px";
-            putText(frame, info, Point(r.x, r.y - 5), FONT_HERSHEY_PLAIN, 1, Scalar(0,255,0), 1);
-        }
-
-        // --- LÓGICA DE CASCADA (HOG -> YOLO) ---
-        if (cuerpoEnteroDetectado) {
-            contadorDeteccion++;
-        } else {
-            contadorDeteccion = 0; 
-        }
-
-        // Se requieren 3 detecciones positivas seguidas (en frames procesados)
-        // Como saltamos frames, esto equivale a unos 10 frames reales (~0.5 segs)
-        if (contadorDeteccion >= 3 && cooldown == 0) {
-            putText(frame, "ENVIANDO A YOLO...", Point(20, 50), FONT_HERSHEY_SIMPLEX, 0.7, Scalar(0, 0, 255), 2);
-            enviarImagenAlBot(frame); 
             contadorDeteccion = 0;
-            cooldown = 40; // Esperar ~3 segundos antes de volver a enviar
+            cooldown = 100; // Pausa larga para no saturar Telegram
         }
 
         if (cooldown > 0) cooldown--;
 
-        imshow("Vigilancia", frame);
+        imshow("Vigilancia C++", frame);
         if (waitKey(1) == 'q') break;
     }
 

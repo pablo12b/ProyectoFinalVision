@@ -1,73 +1,102 @@
-import os
 from flask import Flask, request
-from ultralytics import YOLO
 import cv2
-import numpy as np
-from datetime import datetime
-import telebot # La librería que acabas de instalar
+import time
+import os
+from ultralytics import YOLO
+import telebot
 
-# --- CONFIGURACIÓN DE TELEGRAM (¡LLENA ESTO!) ---
+# --- CONFIGURACIÓN ---
 TOKEN = "8298649145:AAHuZmXFg6nXKPX-6jiR5bmnLpWkaNNHJ2U"
 CHAT_ID = "1903609826"
+model = YOLO('yolo11n-pose.pt')
 
-# Inicializar Bot y Servidor
-bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
+bot = telebot.TeleBot(TOKEN)
 
-# Cargar Modelo YOLO11 (Pose)
-print("--- CARGANDO SISTEMA INTELIGENTE ---")
-model = YOLO('yolo11n-pose.pt') 
-
-# Crear carpetas necesarias
-if not os.path.exists("evidencias"): os.makedirs("evidencias")
-
-@app.route('/detectar', methods=['POST'])
-def detectar():
-    if 'file' not in request.files: return "Sin archivo", 400
-        
-    file = request.files['file']
-    
-    # 1. Leer imagen desde la memoria (sin guardar en disco todavía)
-    filestr = file.read()
-    npimg = np.frombuffer(filestr, np.uint8)
-    img = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
-    
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    print(f"[{timestamp}] 🚨 ¡ALERTA RECIBIDA DESDE C++!")
-
-    # 2. Inferencia con YOLO11 (El cerebro)
-    results = model.predict(img, conf=0.5)
-    
-    # 3. Generar la imagen con el esqueleto (Plot)
-    img_procesada = results[0].plot()
-    
-    # Guardar en disco (Requisito del PDF y para enviar)
-    path_original = f"evidencias/{timestamp}_org.jpg"
-    path_procesada = f"evidencias/{timestamp}_proc.jpg"
-    
-    cv2.imwrite(path_original, img)
-    cv2.imwrite(path_procesada, img_procesada)
-    
-    # 4. ENVIAR A TELEGRAM (Cumpliendo el PDF)
+# --- RUTA 1: GESTIÓN DE FOTOS (HOG + YOLO) ---
+@app.route('/subir_foto', methods=['POST'])
+def recibir_foto():
     try:
-        # Enviamos la procesada con el esqueleto
-        with open(path_procesada, 'rb') as foto:
-            caption_texto = f"⚠️ **ALERTA DE SEGURIDAD**\n📅 {timestamp}\n🤖 Análisis: Postura Detectada"
-            bot.send_photo(CHAT_ID, foto, caption=caption_texto)
-            print("   ✅ Mensaje enviado a Telegram.")
-            
-            # OJO: El PDF pide "Video corto". 
-            # Como C++ manda 1 foto, podemos "simular" enviando la original también
-            # o si quieres puntos extra, luego hacemos que genere un GIF.
-            # Por ahora enviamos la original para cumplir con "evidencia".
-            with open(path_original, 'rb') as orig:
-                 bot.send_photo(CHAT_ID, orig, caption="📸 Captura Original (HOG)")
-                 
-    except Exception as e:
-        print(f"   ❌ Error enviando a Telegram: {e}")
+        print("📸 [FOTO] Recibida desde C++...")
+        file = request.files['file']
+        
+        # Guardamos la imagen original (que ya trae el cuadro verde de C++)
+        filename_hog = "evidencia_hog.jpg"
+        file.save(filename_hog)
+        
+        # --- ENVÍO 1: FOTO HOG ORIGINAL ---
+        print("   -> Enviando Foto HOG...")
+        with open(filename_hog, 'rb') as foto:
+            bot.send_photo(CHAT_ID, foto, caption="1️⃣ Detección Inicial (HOG - C++)")
 
-    return "Procesado", 200
+        # --- ENVÍO 2: PROCESAMIENTO YOLO ---
+        print("   -> Procesando YOLO...")
+        img = cv2.imread(filename_hog)
+        
+        # Aplicar IA de Postura
+        results = model(img)
+        img_yolo = results[0].plot() # Dibuja el esqueleto
+        
+        # Guardar y Enviar
+        filename_yolo = "evidencia_yolo.jpg"
+        cv2.imwrite(filename_yolo, img_yolo)
+        
+        with open(filename_yolo, 'rb') as foto:
+            bot.send_photo(CHAT_ID, foto, caption="2️⃣ Análisis de Postura (YOLO - Python)")
+        
+        print("✅ [FOTOS] Ambas imágenes enviadas.")
+        return "Fotos OK", 200
+
+    except Exception as e:
+        print(f"❌ Error en Fotos: {e}")
+        return "Error", 500
+
+# --- RUTA 2: GRABACIÓN DE VIDEO ---
+@app.route('/grabar_video', methods=['POST'])
+def grabar_video():
+    try:
+        print("🎥 [VIDEO] Iniciando grabación de 5s...")
+        
+        # ABRIR CÁMARA (C++ ya la soltó)
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            print("❌ Error: Cámara ocupada o no encontrada.")
+            return "Error Camara", 500
+
+        # Configuración Video
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = 20.0
+        output_file = "evidencia_video.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_file, fourcc, fps, (width, height))
+
+        start_time = time.time()
+        
+        # Grabar 5 segundos
+        while (time.time() - start_time) < 5:
+            ret, frame = cap.read()
+            if not ret: break
+            
+            # Dibujar esqueleto en el video también
+            results = model(frame, verbose=False)
+            annotated = results[0].plot()
+            out.write(annotated)
+
+        cap.release()
+        out.release()
+        
+        # --- ENVÍO 3: VIDEO ---
+        print("🚀 [VIDEO] Enviando a Telegram...")
+        with open(output_file, 'rb') as video:
+            bot.send_video(CHAT_ID, video, caption="3️⃣ Video de Comportamiento (5s)")
+        
+        print("✅ [VIDEO] Enviado.")
+        return "Video OK", 200
+        
+    except Exception as e:
+        print(f"❌ Error en Video: {e}")
+        return "Error", 500
 
 if __name__ == '__main__':
-    # Escuchar en todas las interfaces para que C++ lo encuentre
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=5000, threaded=False)
